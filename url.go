@@ -5,46 +5,40 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
-// RawURL represents a raw URL with no normalization or encoding.
-// It preserves the exact format of the original URL string
-// including any percent-encoding, special characters, unicode chars, etc.
 var (
 	ErrEmptyURL   = errors.New("empty URL")
 	ErrInvalidURL = errors.New("invalid URL format")
 )
 
-// RawURL represents a raw URL with no normalization or encoding
 type RawURL struct {
-	Original      string    // The original, unmodified URL string
-	Scheme        string    // The URL scheme (e.g., "http", "https")
-	Opaque        string    // For non-hierarchical URLs (e.g., mailto:user@example.com)
-	User          *Userinfo // username and password information
-	Host          string    // The host component (hostname + port)
-	Path          string    // The path component, exactly as provided
-	Query         string    // The query string without the leading '?'
-	Fragment      string    // The fragment without the leading '#'
-	RawRequestURI string    // Everything after host: /path?query#fragment
+	Original      string
+	Scheme        string
+	Opaque        string
+	User          *Userinfo
+	Host          string
+	Path          string
+	Query         string
+	Fragment      string
+	RawRequestURI string
 }
 
-// Userinfo stores username and password info
 type Userinfo struct {
 	username    string
 	password    string
 	passwordSet bool
 }
 
-// ParseOptions contains configuration options for URL parsing
 type ParseOptions struct {
-	FallbackScheme     string // Default scheme if none provided
-	AllowMissingScheme bool   // If true, uses FallbackScheme when scheme is missing
+	FallbackScheme     string
+	AllowMissingScheme bool
 }
 
-// DefaultOptions returns the default parsing options
 func DefaultOptions() *ParseOptions {
 	return &ParseOptions{
 		FallbackScheme:     "https",
@@ -52,7 +46,6 @@ func DefaultOptions() *ParseOptions {
 	}
 }
 
-// RawURLParseWithOptions parses URL with custom options
 func RawURLParseWithOptions(rawURL string, opts *ParseOptions) (*RawURL, error) {
 	if len(rawURL) == 0 {
 		return nil, ErrEmptyURL
@@ -62,7 +55,6 @@ func RawURLParseWithOptions(rawURL string, opts *ParseOptions) (*RawURL, error) 
 		Original: rawURL,
 	}
 
-	// Handle scheme
 	schemeEnd := strings.Index(rawURL, "://")
 	remaining := rawURL
 
@@ -70,7 +62,7 @@ func RawURLParseWithOptions(rawURL string, opts *ParseOptions) (*RawURL, error) 
 		result.Scheme = rawURL[:schemeEnd]
 		remaining = rawURL[schemeEnd+3:]
 	} else {
-		// Check for scheme without //
+
 		if colonIndex := strings.Index(rawURL, ":"); colonIndex != -1 {
 			beforeColon := rawURL[:colonIndex]
 			if !strings.Contains(beforeColon, "/") && !strings.Contains(beforeColon, ".") {
@@ -80,13 +72,11 @@ func RawURLParseWithOptions(rawURL string, opts *ParseOptions) (*RawURL, error) 
 			}
 		}
 
-		// Apply fallback scheme if configured
 		if opts != nil && opts.AllowMissingScheme {
 			result.Scheme = opts.FallbackScheme
 		}
 	}
 
-	// Split authority (host + optional userinfo) from path
 	pathStart := strings.Index(remaining, "/")
 	authority := remaining
 	if pathStart != -1 {
@@ -96,7 +86,6 @@ func RawURLParseWithOptions(rawURL string, opts *ParseOptions) (*RawURL, error) 
 		remaining = "/"
 	}
 
-	// Parse authority (user:pass@host:port)
 	if atIndex := strings.Index(authority, "@"); atIndex != -1 {
 		userinfo := authority[:atIndex]
 		authority = authority[atIndex+1:]
@@ -111,46 +100,39 @@ func RawURLParseWithOptions(rawURL string, opts *ParseOptions) (*RawURL, error) 
 		}
 	}
 
-	// Handle IPv6 addresses
 	if strings.HasPrefix(authority, "[") {
 		closeBracket := strings.LastIndex(authority, "]")
 		if closeBracket == -1 {
 			return nil, ErrInvalidURL
 		}
 
-		// Get the IPv6 address part
 		result.Host = authority[:closeBracket+1]
 
-		// Check for port after the IPv6 address
 		if len(authority) > closeBracket+1 {
 			if authority[closeBracket+1] == ':' {
-				result.Host = authority // Include the full authority with port
+				result.Host = authority
 			}
 		}
 	} else {
-		// Handle IPv4 and regular hostnames
+
 		result.Host = authority
 	}
 
-	// Parse path, query, and fragment
 	if len(remaining) > 0 {
-		// Extract fragment
+
 		if hashIndex := strings.Index(remaining, "#"); hashIndex != -1 {
 			result.Fragment = remaining[hashIndex+1:]
 			remaining = remaining[:hashIndex]
 		}
 
-		// Extract query
 		if queryIndex := strings.Index(remaining, "?"); queryIndex != -1 {
 			result.Query = remaining[queryIndex+1:]
 			remaining = remaining[:queryIndex]
 		}
 
-		// What's left is the path
 		result.Path = remaining
 	}
 
-	// Build RawRequestURI
 	result.RawRequestURI = result.Path
 	if result.Query != "" {
 		result.RawRequestURI += "?" + result.Query
@@ -162,36 +144,27 @@ func RawURLParseWithOptions(rawURL string, opts *ParseOptions) (*RawURL, error) 
 	return result, nil
 }
 
-// Parse parses URL with default options
 func Parse(rawURL string) (*RawURL, error) {
 	return RawURLParseWithOptions(rawURL, DefaultOptions())
 }
 
-// RawURLParseStrict parses URL without fallback scheme
 func RawURLParseStrict(rawURL string) (*RawURL, error) {
 	return RawURLParseWithOptions(rawURL, nil)
 }
 
-// Hostname() returns u.Host, stripping any valid port number if present.
-// If the result is enclosed in square brackets, as literal IPv6 addresses are,
-// the square brackets are removed from the result.
 func (u *RawURL) Hostname() string {
-	// Use existing GetHostname method for consistency
+
 	return u.GetHostname()
 }
 
-// Port() returns the port part of u.Host, without the leading colon.
-// If u.Host doesn't contain a valid numeric port, Port returns an empty string.
 func (u *RawURL) Port() string {
 	return u.GetPort()
 }
 
-// The most basic function to quickly get the base URL using fmt.Sprintf
 func (u *RawURL) BaseURL() string {
 	return fmt.Sprintf("%s://%s", u.Scheme, u.Host)
 }
 
-// URLComponent represents different parts of a URL that can be updated
 type URLComponent int
 
 const (
@@ -206,13 +179,11 @@ const (
 	RawURI
 )
 
-// URLBuilder represents a mutable URL structure for manipulation
 type RawURLBuilder struct {
-	*RawURL           // Embed the original RawURL
-	workingURI string // Working copy of RequestURI
+	*RawURL
+	workingURI string
 }
 
-// NewURLBuilder creates a new builder from RawURL
 func NewRawURLBuilder(u *RawURL) *RawURLBuilder {
 	return &RawURLBuilder{
 		RawURL:     u,
@@ -220,8 +191,6 @@ func NewRawURLBuilder(u *RawURL) *RawURLBuilder {
 	}
 }
 
-// FullString reconstructs the URL from its components
-// deprecated
 func (u *RawURL) FullString() string {
 	var buf strings.Builder
 
@@ -255,7 +224,6 @@ func (u *RawURL) FullString() string {
 	return buf.String()
 }
 
-// GetRawScheme reconstructs the scheme from its components
 func GetRawScheme(u *RawURL) string {
 	if u.Scheme == "" {
 		return ""
@@ -266,7 +234,6 @@ func GetRawScheme(u *RawURL) string {
 	return buf.String()
 }
 
-// GetRawUserInfo reconstructs the userinfo from its components
 func GetRawUserInfo(u *RawURL) string {
 	if u.User == nil {
 		return ""
@@ -281,7 +248,6 @@ func GetRawUserInfo(u *RawURL) string {
 	return buf.String()
 }
 
-// GetRawAuthority reconstructs the authority from its components
 func GetRawAuthority(u *RawURL) string {
 	var buf strings.Builder
 	if u.User != nil {
@@ -291,11 +257,21 @@ func GetRawAuthority(u *RawURL) string {
 	return buf.String()
 }
 
-// GetRawHost reconstructs the host of the URL (with port)
 func GetRawHost(u *RawURL) string {
 	var buf strings.Builder
 	buf.WriteString(u.Host)
 	return buf.String()
+}
+
+func IsIP(input string) bool {
+	if strings.Contains(input, ":") && strings.Count(input, ":") == 1 {
+		input, _, _ = net.SplitHostPort(input)
+	}
+	ip := net.ParseIP(input)
+	if ip == nil {
+		return false
+	}
+	return true
 }
 
 func (u *RawURL) Subdomain(index ...int) string {
@@ -303,57 +279,49 @@ func (u *RawURL) Subdomain(index ...int) string {
 	if len(index) > 0 {
 		i = index[0]
 	}
+	if IsIP(u.Hostname()) {
+		return ""
+	}
 	parts := strings.Split(u.Hostname(), ".")
 	if len(parts) >= 3 {
-		return parts[i] // Subdomain is the first part
+		return parts[i]
 	}
-	return "" // No subdomain
+	return ""
 }
 
-// GetHostname returns the hostname without port.
-// For IPv6 addresses, the square brackets are preserved.
 func (u *RawURL) GetHostname() string {
 	host := u.Host
-
-	// Handle IPv6 addresses
 	if strings.HasPrefix(host, "[") {
 		if closeBracket := strings.LastIndex(host, "]"); closeBracket != -1 {
-			// Return the IPv6 address with brackets
 			if len(host) > closeBracket+1 && host[closeBracket+1] == ':' {
 				return host[:closeBracket+1]
 			}
 			return host
 		}
-		return host // Malformed IPv6, return as-is
+		return host
 	}
-
-	// Handle IPv4 and regular hostnames
 	if i := strings.LastIndex(host, ":"); i != -1 {
 		return host[:i]
 	}
 	return host
 }
 
-// GetPort returns the port part of the host.
-// Returns empty string if no port is present.
 func (u *RawURL) GetPort() string {
 	host := u.Host
 
-	// Handle IPv6 addresses
 	if strings.HasPrefix(host, "[") {
 		if closeBracket := strings.LastIndex(host, "]"); closeBracket != -1 {
 			if len(host) > closeBracket+1 && host[closeBracket+1] == ':' {
-				return host[closeBracket+2:] // Return everything after ]:
+				return host[closeBracket+2:]
 			}
 			return ""
 		}
 		return ""
 	}
 
-	// Handle IPv4 and regular hostnames
 	if i := strings.LastIndex(host, ":"); i != -1 {
 		port := host[i+1:]
-		// Validate port is numeric
+
 		for _, b := range port {
 			if b < '0' || b > '9' {
 				return ""
@@ -364,7 +332,6 @@ func (u *RawURL) GetPort() string {
 	return ""
 }
 
-// GetRawPath reconstructs the path from its components
 func GetRawPath(u *RawURL) string {
 	var buf strings.Builder
 	if u.Path == "" {
@@ -372,7 +339,6 @@ func GetRawPath(u *RawURL) string {
 		return buf.String()
 	}
 
-	// Check first byte directly for '/'
 	if len(u.Path) > 0 && u.Path[0] != '/' {
 		buf.WriteString("/")
 	}
@@ -380,16 +346,13 @@ func GetRawPath(u *RawURL) string {
 	return buf.String()
 }
 
-// GetRawPathUnsafe reconstructs the path from its components
-// Similar to GetRawPath but will omit first / in path
-// Might be needed when fuzzing full paths
 func GetRawPathUnsafe(u *RawURL) string {
 	if u.Path == "" {
 		return ""
 	}
 
 	var buf strings.Builder
-	// Skip first char if it's a '/'
+
 	if len(u.Path) > 0 {
 		if u.Path[0] == '/' {
 			buf.WriteString(u.Path[1:])
@@ -400,7 +363,6 @@ func GetRawPathUnsafe(u *RawURL) string {
 	return buf.String()
 }
 
-// GetRawQuery reconstructs the query from its components
 func GetRawQuery(u *RawURL) string {
 	if u.Query == "" {
 		return ""
@@ -411,7 +373,6 @@ func GetRawQuery(u *RawURL) string {
 	return buf.String()
 }
 
-// GetRawFragment reconstructs the fragment from its components
 func GetRawFragment(u *RawURL) string {
 	if u.Fragment == "" {
 		return ""
@@ -422,7 +383,6 @@ func GetRawFragment(u *RawURL) string {
 	return buf.String()
 }
 
-// QueryValues returns a map of query parameters
 func (u *RawURL) GetQueryValues() map[string][]string {
 	values := make(map[string][]string)
 	for _, pair := range strings.Split(u.Query, "&") {
@@ -454,25 +414,20 @@ GetRawFullURL reconstructs the full URL from its components
 func (u *RawURL) GetRawFullURL() string {
 	var buf strings.Builder
 
-	// Scheme
 	if u.Scheme != "" {
 		buf.WriteString(u.Scheme)
 		buf.WriteString("://")
 	}
 
-	// Authority (userinfo + host)
 	buf.WriteString(GetRawAuthority(u))
 
-	// Path
 	buf.WriteString(GetRawPath(u))
 
-	// Query
 	if u.Query != "" {
 		buf.WriteRune('?')
 		buf.WriteString(u.Query)
 	}
 
-	// Fragment
 	if u.Fragment != "" {
 		buf.WriteRune('#')
 		buf.WriteString(u.Fragment)
@@ -481,8 +436,6 @@ func (u *RawURL) GetRawFullURL() string {
 	return buf.String()
 }
 
-// GetRawRequestURI returns the exact URI as it would appear in an HTTP request line
-// It could be "//a/b/c../;/?x=test", "\\a\\bb\\..\\test//..//..//users.json", "@collaboratorhost", etc
 func (u *RawURL) GetRawRequestURI() string {
 	if u.RawRequestURI != "" {
 		return u.RawRequestURI
@@ -490,18 +443,15 @@ func (u *RawURL) GetRawRequestURI() string {
 
 	var buf strings.Builder
 
-	// If no custom RawRequestURI is set, construct from Path
 	if u.Path != "" {
 		buf.WriteString(u.Path)
 	}
 
-	// Add query if present
 	if u.Query != "" {
 		buf.WriteRune('?')
 		buf.WriteString(u.Query)
 	}
 
-	// Add fragment if present
 	if u.Fragment != "" {
 		buf.WriteRune('#')
 		buf.WriteString(u.Fragment)
@@ -510,8 +460,6 @@ func (u *RawURL) GetRawRequestURI() string {
 	return buf.String()
 }
 
-// GetAbsoluteURI returns the full URI including scheme and host
-// Example: "http://example.com/path?query#fragment"
 func (u *RawURL) GetRawAbsoluteURI() string {
 	var buf strings.Builder
 
@@ -526,7 +474,6 @@ func (u *RawURL) GetRawAbsoluteURI() string {
 	return buf.String()
 }
 
-// UpdateRawURL updates a specific component of the URL with a new value
 func (u *RawURL) UpdateRawURL(component URLComponent, newValue string) {
 	switch component {
 	case Scheme:
@@ -543,14 +490,14 @@ func (u *RawURL) UpdateRawURL(component URLComponent, newValue string) {
 		u.User.password = newValue
 		u.User.passwordSet = true
 	case Host:
-		// Update host without affecting port
+
 		if port := u.GetPort(); port != "" {
 			u.Host = newValue + ":" + port
 		} else {
 			u.Host = newValue
 		}
 	case Port:
-		// Update port without affecting host
+
 		hostname := u.GetHostname()
 		if newValue != "" {
 			u.Host = hostname + ":" + newValue
@@ -559,46 +506,34 @@ func (u *RawURL) UpdateRawURL(component URLComponent, newValue string) {
 		}
 	case Path:
 		u.Path = newValue
-		u.RawRequestURI = "" // Clear any custom raw URI when updating path
+		u.RawRequestURI = ""
 	case Query:
 		u.Query = newValue
-		u.RawRequestURI = "" // Clear any custom raw URI when updating query
+		u.RawRequestURI = ""
 	case Fragment:
 		u.Fragment = newValue
-		u.RawRequestURI = "" // Clear any custom raw URI when updating fragment
+		u.RawRequestURI = ""
 	case RawURI:
-		u.RawRequestURI = newValue // Same as SetRawRequestURI
+		u.RawRequestURI = newValue
 	}
 }
 
-// SetRawRequestURI allows setting a custom request URI
-// This is useful for fuzzing/testing with non-standard URIs
-// It's equivalent to UpdateRawURL(RawURI, uri)
 func (u *RawURL) SetRawRequestURI(uri string) {
 	u.UpdateRawURL(RawURI, uri)
 }
 
-// splitHostPort() separates host and port. If the port is not valid, it returns
-// the entire input as host, and it doesn't check the validity of the host.
-// Unlike net.SplitHostPort, but per RFC 3986, it requires ports to be numeric.
 func splitHostPort(hostPort string) (host, port string) {
 	host = hostPort
-
 	colon := strings.LastIndexByte(host, ':')
 	if colon != -1 && validOptionalPort(host[colon:]) {
 		host, port = host[:colon], host[colon+1:]
 	}
-
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
 		host = host[1 : len(host)-1]
 	}
-
 	return
 }
 
-//	validOptionalPort reports whether port is either an empty string
-//
-// or matches /^:\d*$/
 func validOptionalPort(port string) bool {
 	if port == "" {
 		return true
@@ -614,21 +549,16 @@ func validOptionalPort(port string) bool {
 	return true
 }
 
-// GetAsciiHex returns hex value of ascii char
 func GetAsciiHex(r rune) string {
 	val := strconv.FormatInt(int64(r), 16)
 	if len(val) == 1 {
-		// append 0 formatInt skips it by default
+
 		val = "0" + val
 	}
 	return strings.ToUpper(val)
 }
 
-// GetUTF8Hex returns hex value of utf-8 non-ascii char
 func GetUTF8Hex(r rune) string {
-	// Percent Encoding is only done in hexadecimal values and in ASCII Range only
-	// other UTF-8 chars (chinese etc) can be used by utf-8 encoding and byte conversion
-	// let golang do utf-8 encoding of rune
 	var buff bytes.Buffer
 	utfchar := string(r)
 	hexencstr := hex.EncodeToString([]byte(utfchar))
@@ -641,14 +571,10 @@ func GetUTF8Hex(r rune) string {
 	return buff.String()
 }
 
-// lastIndexRune returns the last index} of a rune in a string
 func lastIndexRune(s string, r rune) int {
-	// Fast path for ASCII
 	if r < utf8.RuneSelf {
 		return strings.LastIndex(s, string(r))
 	}
-
-	// For non-ASCII runes, we need to scan backwards
 	for i := len(s); i > 0; {
 		r1, size := utf8.DecodeLastRuneInString(s[:i])
 		if r1 == r {
@@ -659,7 +585,6 @@ func lastIndexRune(s string, r rune) int {
 	return -1
 }
 
-// GetRuneMap returns a map of runes
 func GetRuneMap(runes []rune) map[rune]struct{} {
 	x := map[rune]struct{}{}
 	for _, v := range runes {
